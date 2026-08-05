@@ -100,10 +100,9 @@
     padding-left:0;
   }
   ul.tree.nested{
-    padding-left:44px;
+    padding-left:30px;
     margin-top:2px;
-    border-left:1px solid var(--branch);
-    margin-left:9px;
+    margin-left:7px;
   }
 
   li.task{
@@ -177,8 +176,18 @@
     letter-spacing:0.1px;
     padding-top:3px;
   }
+  .label.depth-1{ font-size:14px; font-weight:600; }
+  .label.depth-2{ font-size:13.5px; }
+  .label.depth-3,
+  .label.depth-4{ font-size:13px; }
   .row.heading-row{
-    padding-left:0;
+    padding:7px 6px 7px 10px;
+    margin:0 0 4px -10px;
+    background:var(--accent-soft);
+    border-radius:8px;
+  }
+  .row.heading-row:hover{
+    background:#dbe6e0;
   }
   .row.heading-row .twirl{
     height:30px;
@@ -191,16 +200,41 @@
     margin-top:0;
   }
 
-  .count{
+  .date-field{
+    position:relative;
+    flex:0 0 38px;
+    height:20px;
+    margin-top:2px;
+    opacity:0;
+    transition:opacity 0.12s;
+  }
+  .row:hover .date-field{ opacity:1; }
+  .date-field.has-date{ opacity:0.85; }
+  .date-field:focus-within{ opacity:1; }
+  .date-native{
+    position:absolute;
+    inset:0;
+    opacity:0;
+    cursor:pointer;
+    border:none;
+    background:none;
+    width:100%;
+    height:100%;
+    padding:0;
+  }
+  .date-display{
+    position:absolute;
+    inset:0;
+    display:flex;
+    align-items:center;
     font-family:var(--font-mono);
-    font-size:11px;
+    font-size:10px;
     color:var(--ink-soft);
-    background:var(--accent-soft);
-    padding:1px 6px;
-    border-radius:10px;
-    margin-left:2px;
+    pointer-events:none;
     white-space:nowrap;
   }
+  .date-field.has-date .date-display{ color:var(--accent); }
+  .date-field.overdue .date-display{ color:var(--danger); }
 
   .row-actions{
     display:flex;
@@ -222,6 +256,14 @@
   }
   .row-actions button.add-sub{
     border:1px solid var(--line);
+    width:22px;
+    height:22px;
+    padding:0;
+    font-size:15px;
+    line-height:1;
+    display:flex;
+    align-items:center;
+    justify-content:center;
   }
   .row-actions button.add-sub:hover{
     background:var(--accent-soft);
@@ -329,12 +371,8 @@
     background:var(--accent-soft);
   }
 
-  .user-email{
-    margin-left:auto;
-    opacity:0.7;
-  }
   #signOutBtn{
-    margin-left:0;
+    margin-left:auto;
   }
 </style>
 </head>
@@ -361,10 +399,8 @@
   <header>
     <h1>To-Do</h1>
     <div class="sub">
-      <span id="stat">0 open</span>
       <button id="clearDone">clear completed</button>
       <button id="exportBtn">export</button>
-      <span id="userEmail" class="user-email"></span>
       <button id="signOutBtn">sign out</button>
     </div>
   </header>
@@ -447,28 +483,32 @@ function save(){
 }
 
 let tasks = []; // flat array: {id, text, done, parentId, collapsed}
+let draggingId = null; // id of the task currently being dragged (any level)
 
 function uid(){ return 't' + Math.random().toString(36).slice(2,10); }
+
+function isOverdue(task){
+  if(!task.date || task.done) return false;
+  const todayStr = new Date().toISOString().slice(0,10);
+  return task.date < todayStr;
+}
+
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function formatDateShort(dateStr){
+  // dateStr is 'YYYY-MM-DD'. Deliberately drop the year and avoid
+  // toLocaleDateString, whose output format/width varies a lot by
+  // device locale and can overflow the small badge on mobile.
+  const parts = dateStr.split('-');
+  const month = parseInt(parts[1], 10);
+  const day = parseInt(parts[2], 10);
+  return MONTH_ABBR[month - 1] + ' ' + day;
+}
 
   function childrenOf(parentId){
     return tasks.filter(t => t.parentId === parentId);
   }
 
-  function countOpen(parentId){
-    let n = 0;
-    for(const t of childrenOf(parentId)){
-      if(!t.done) n++;
-      n += countOpen(t.id);
-    }
-    return n;
-  }
-
-  function countAllOpen(){
-    return tasks.filter(t => !t.done).length;
-  }
-
   const treeRoot = document.getElementById('treeRoot');
-  const statEl = document.getElementById('stat');
   const newTaskInput = document.getElementById('newTask');
 
   function render(){
@@ -477,24 +517,23 @@ function uid(){ return 't' + Math.random().toString(36).slice(2,10); }
     if(tasks.length === 0){
       treeRoot.innerHTML = '<div class="empty-state"><span class="glyph">◦</span>Nothing here yet. Add your first task above.</div>';
     } else {
-      const ul = buildList(null);
+      const ul = buildList(null, 0);
       treeRoot.appendChild(ul);
     }
-    statEl.textContent = countAllOpen() + ' open';
     save();
   }
 
-  function buildList(parentId){
+  function buildList(parentId, depth){
     const ul = document.createElement('ul');
     ul.className = 'tree' + (parentId === null ? '' : ' nested');
     const kids = childrenOf(parentId);
     kids.forEach(task => {
-      ul.appendChild(buildItem(task));
+      ul.appendChild(buildItem(task, depth));
     });
     return ul;
   }
 
-  function buildItem(task){
+  function buildItem(task, depth){
     const li = document.createElement('li');
     li.className = 'task';
     li.dataset.id = task.id;
@@ -514,35 +553,43 @@ function uid(){ return 't' + Math.random().toString(36).slice(2,10); }
         render();
       });
     }
-    row.appendChild(twirl);
 
     const isHeading = task.parentId === null;
 
     row.dataset.id = task.id;
 
-    if(!isHeading){
-      const handle = document.createElement('div');
-      handle.className = 'handle';
-      handle.textContent = '⠿';
-      handle.draggable = true;
-      handle.addEventListener('dragstart', (e) => {
-        e.dataTransfer.setData('text/plain', task.id);
-        e.dataTransfer.effectAllowed = 'move';
-        li.classList.add('dragging');
-      });
-      handle.addEventListener('dragend', () => {
-        li.classList.remove('dragging');
-        clearDropHints();
-      });
-      row.appendChild(handle);
-    }
+    const handle = document.createElement('div');
+    handle.className = 'handle';
+    handle.textContent = '⠿';
+    handle.draggable = true;
+    handle.addEventListener('dragstart', (e) => {
+      draggingId = task.id;
+      e.dataTransfer.setData('text/plain', task.id);
+      e.dataTransfer.effectAllowed = 'move';
+      li.classList.add('dragging');
+    });
+    handle.addEventListener('dragend', () => {
+      draggingId = null;
+      li.classList.remove('dragging');
+      clearDropHints();
+    });
 
     row.addEventListener('dragover', (e) => {
+      const dragged = tasks.find(t => t.id === draggingId);
+      if(!dragged || dragged.id === task.id) return;
+      const draggedIsHeading = dragged.parentId === null;
+      // A heading can only be reordered against other headings, not dropped
+      // onto/into a sub-task row.
+      if(draggedIsHeading && !isHeading) return;
       e.preventDefault();
       clearDropHints();
       const rect = row.getBoundingClientRect();
       const before = e.clientY < rect.top + rect.height / 2;
-      if(isHeading){
+      if(draggedIsHeading){
+        // reordering two top-level categories against each other
+        row.classList.add(before ? 'drop-before' : 'drop-after');
+      } else if(isHeading){
+        // dropping a sub-task onto a category nests it inside that category
         row.classList.add('drop-into');
       } else {
         row.classList.add(before ? 'drop-before' : 'drop-after');
@@ -554,16 +601,20 @@ function uid(){ return 't' + Math.random().toString(36).slice(2,10); }
     row.addEventListener('drop', (e) => {
       e.preventDefault();
       clearDropHints();
-      const draggedId = e.dataTransfer.getData('text/plain');
+      const draggedId = draggingId || e.dataTransfer.getData('text/plain');
       if(!draggedId || draggedId === task.id) return;
       const dragged = tasks.find(t => t.id === draggedId);
       if(!dragged) return;
       if(collectSubtreeIds(dragged.id).has(task.id)) return; // no dropping into own subtree
-      if(isHeading){
+      const draggedIsHeading = dragged.parentId === null;
+      if(draggedIsHeading && !isHeading) return; // invalid target, ignore
+      const rect = row.getBoundingClientRect();
+      const before = e.clientY < rect.top + rect.height / 2;
+      if(draggedIsHeading){
+        moveTaskTo(dragged, null, task.id, !before);
+      } else if(isHeading){
         moveTaskTo(dragged, task.id, null, true);
       } else {
-        const rect = row.getBoundingClientRect();
-        const before = e.clientY < rect.top + rect.height / 2;
         moveTaskTo(dragged, task.parentId, task.id, !before);
       }
       render();
@@ -581,7 +632,7 @@ function uid(){ return 't' + Math.random().toString(36).slice(2,10); }
     }
 
     const label = document.createElement('div');
-    label.className = 'label' + (task.done ? ' done' : '') + (isHeading ? ' heading' : '');
+    label.className = 'label' + (task.done ? ' done' : '') + (isHeading ? ' heading' : ' depth-' + Math.min(depth, 4));
     label.contentEditable = 'true';
     label.textContent = task.text;
     label.addEventListener('blur', () => {
@@ -617,14 +668,30 @@ function uid(){ return 't' + Math.random().toString(36).slice(2,10); }
     });
     row.appendChild(label);
 
-    if(hasKids){
-      const openCount = countOpen(task.id);
-      if(openCount > 0){
-        const count = document.createElement('span');
-        count.className = 'count';
-        count.textContent = openCount;
-        row.appendChild(count);
-      }
+    row.appendChild(twirl);
+    row.appendChild(handle);
+
+    if(!isHeading){
+      const dateField = document.createElement('div');
+      dateField.className = 'date-field' + (task.date ? ' has-date' : '') + (isOverdue(task) ? ' overdue' : '');
+
+      const dateNative = document.createElement('input');
+      dateNative.type = 'date';
+      dateNative.className = 'date-native';
+      dateNative.value = task.date || '';
+      dateNative.title = task.date ? 'Due date' : 'Add a due date';
+      dateNative.addEventListener('change', () => {
+        task.date = dateNative.value || null;
+        render();
+      });
+
+      const dateDisplay = document.createElement('span');
+      dateDisplay.className = 'date-display';
+      dateDisplay.textContent = task.date ? formatDateShort(task.date) : 'date';
+
+      dateField.appendChild(dateNative);
+      dateField.appendChild(dateDisplay);
+      row.appendChild(dateField);
     }
 
     const actions = document.createElement('div');
@@ -633,7 +700,7 @@ function uid(){ return 't' + Math.random().toString(36).slice(2,10); }
     const addSub = document.createElement('button');
     addSub.className = 'add-sub';
     addSub.title = 'Add sub-task';
-    addSub.textContent = '+ sub';
+    addSub.textContent = '+';
     addSub.addEventListener('click', () => addChild(task));
     actions.appendChild(addSub);
 
@@ -648,7 +715,7 @@ function uid(){ return 't' + Math.random().toString(36).slice(2,10); }
     li.appendChild(row);
 
     if(hasKids && !task.collapsed){
-      li.appendChild(buildList(task.id));
+      li.appendChild(buildList(task.id, depth + 1));
     }
 
     return li;
@@ -656,13 +723,13 @@ function uid(){ return 't' + Math.random().toString(36).slice(2,10); }
 
   function addTopLevel(text){
     if(!text.trim()) return;
-    tasks.push({ id: uid(), text: text.trim(), done:false, parentId:null, collapsed:false });
+    tasks.push({ id: uid(), text: text.trim(), done:false, parentId:null, collapsed:false, date:null });
     render();
   }
 
   function addChild(parentTask){
     parentTask.collapsed = false;
-    const t = { id: uid(), text:'', done:false, parentId:parentTask.id, collapsed:false };
+    const t = { id: uid(), text:'', done:false, parentId:parentTask.id, collapsed:false, date:null };
     tasks.push(t);
     render();
     focusTask(t.id);
@@ -670,7 +737,7 @@ function uid(){ return 't' + Math.random().toString(36).slice(2,10); }
 
   function addSibling(afterTask){
     const idx = tasks.findIndex(t => t.id === afterTask.id);
-    const t = { id: uid(), text:'', done:false, parentId:afterTask.parentId, collapsed:false };
+    const t = { id: uid(), text:'', done:false, parentId:afterTask.parentId, collapsed:false, date:null };
     tasks.splice(idx+1, 0, t);
     render();
     focusTask(t.id);
@@ -771,9 +838,10 @@ function uid(){ return 't' + Math.random().toString(36).slice(2,10); }
   }
 
   function outdent(task){
-    if(task.parentId === null) return;
+    if(task.parentId === null) return; // already a heading
     const parent = tasks.find(t => t.id === task.parentId);
-    task.parentId = parent ? parent.parentId : null;
+    if(!parent || parent.parentId === null) return; // parent is a category — this task is already at the shallowest level a regular task can be; don't promote it to a heading
+    task.parentId = parent.parentId;
     render();
     focusTask(task.id);
   }
@@ -841,7 +909,6 @@ function uid(){ return 't' + Math.random().toString(36).slice(2,10); }
   onAuthStateChanged(auth, async (user) => {
     if(user){
       currentUid = user.uid;
-      document.getElementById('userEmail').textContent = user.email || user.displayName || '';
       document.body.classList.add('signed-in');
       tasks = await loadFromCloud(currentUid);
       render();
